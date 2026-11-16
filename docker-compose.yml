@@ -1,0 +1,85 @@
+name: c3-howard-nuvem
+services:
+  gateway:
+    build: ./services/gateway
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET em .env}
+      JWT_TTL_MINUTES: ${JWT_TTL_MINUTES:-60}
+      DEMO_USERNAME: ${DEMO_USERNAME:-aluno}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:?Defina DEMO_PASSWORD em .env}
+      REDIS_URL: redis://redis:6379/0
+      INFERENCE_URL: http://inference:8001
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    ports: ["8000:8000"]
+    depends_on:
+      redis: {condition: service_healthy}
+      inference: {condition: service_started}
+      otel-collector: {condition: service_started}
+    restart: unless-stopped
+  inference:
+    build: ./services/inference
+    environment:
+      VECTOR_URL: http://vectorstore:8002
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    depends_on:
+      vectorstore: {condition: service_started}
+      otel-collector: {condition: service_started}
+    restart: unless-stopped
+  worker:
+    build: ./services/worker
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      INFERENCE_URL: http://inference:8001
+      JOB_TIMEOUT_SECONDS: 20
+      MAX_RETRIES: 4
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    depends_on:
+      redis: {condition: service_healthy}
+      inference: {condition: service_started}
+      otel-collector: {condition: service_started}
+    restart: unless-stopped
+  vectorstore:
+    build: ./services/vectorstore
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    depends_on:
+      qdrant: {condition: service_started}
+      otel-collector: {condition: service_started}
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    volumes: [qdrant_data:/qdrant/storage]
+    restart: unless-stopped
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: ["./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro"]
+    ports: ["127.0.0.1:4317:4317", "127.0.0.1:4318:4318"]
+    restart: unless-stopped
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["public"]
+    environment: ["PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-localhost}"]
+    ports: ["80:80", "443:443"]
+    volumes: ["./deploy/Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+    depends_on: [gateway]
+    restart: unless-stopped
+volumes:
+  redis_data:
+  qdrant_data:
+  caddy_data:
+  caddy_config:
