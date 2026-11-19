@@ -46,15 +46,48 @@ async def login(payload:Login):
  if payload.username!=os.getenv('DEMO_USERNAME','aluno') or payload.password!=os.getenv('DEMO_PASSWORD'): raise HTTPException(401,'Credenciais invalidas')
  now=datetime.now(timezone.utc); token=jwt.encode({'sub':payload.username,'iat':now,'exp':now+timedelta(minutes=TTL)},SECRET,algorithm='HS256')
  return {'access_token':token,'token_type':'bearer','expires_in':TTL*60}
-@app.post('/v1/jobs',status_code=202)
-async def submit(payload:RequestJob, request:Request, user:str=Depends(auth)):
- await limit(request,user); job_id=str(uuid.uuid4()); carrier={}; inject(carrier)
- msg={'job_id':job_id,'text':payload.text,'owner':user,'trace_context':carrier}
- with tracer.start_as_current_span('queue.publish') as span:
-  span.set_attribute('messaging.destination.name','jobs'); span.set_attribute('messaging.message.id',job_id)
-  await R.hset(f'job:{job_id}',mapping={'status':'queued','owner':user,'created_at':datetime.now(timezone.utc).isoformat()})
-  await R.lpush('jobs',__import__('json').dumps(msg))
- return {'job_id':job_id,'status':'queued','status_url':f'/v1/jobs/{job_id}'}
+
+@app.post('/v1/jobs', status_code=202)
+async def submit(
+    payload: RequestJob,
+    request: Request,
+    user: str = Depends(auth)
+):
+    await limit(request, user)
+
+    job_id = str(uuid.uuid4())
+
+    with tracer.start_as_current_span('queue.publish') as span:
+        span.set_attribute('messaging.destination.name', 'jobs')
+        span.set_attribute('messaging.message.id', job_id)
+
+        carrier = {}
+        inject(carrier)
+
+        msg = {
+            'job_id': job_id,
+            'text': payload.text,
+            'owner': user,
+            'trace_context': carrier
+        }
+
+        await R.hset(
+            f'job:{job_id}',
+            mapping={
+                'status': 'queued',
+                'owner': user,
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }
+        )
+
+        await R.lpush('jobs', __import__('json').dumps(msg))
+
+    return {
+        'job_id': job_id,
+        'status': 'queued',
+        'status_url': f'/v1/jobs/{job_id}'
+    }
+
 @app.get('/v1/jobs/{job_id}')
 async def get_job(job_id:str,user:str=Depends(auth)):
  data=await R.hgetall(f'job:{job_id}')
