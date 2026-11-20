@@ -24,7 +24,7 @@ flowchart LR
     V -.-> O
 ```
 
-O gateway recebe as requisições e publica os jobs no Redis. O worker processa a fila e chama o serviço de inferência. A inferência consulta o serviço de armazenamento vetorial e, se `OPENAI_API_KEY` estiver configurada, pode chamar uma API de IA externa.
+O gateway recebe as requisições e publica os jobs no Redis. O worker processa a fila e chama o serviço de inferência. A inferência consulta o serviço de armazenamento vetorial e, se `OPENAI_API_KEY` estiver configurada, pode chamar uma API de IA externa. Sem a chave, ou se a API externa falhar, responde em modo offline com o contexto encontrado.
 
 Há um Dockerfile para cada serviço próprio: gateway, inferência, worker e vectorstore. Redis, Qdrant, OpenTelemetry Collector e Caddy são usados como imagens de terceiros no Compose.
 
@@ -89,7 +89,7 @@ Rotas principais:
 - `POST /v1/jobs`: envio de um job; exige JWT e responde com HTTP 202.
 - `GET /v1/jobs/{job_id}`: consulta do job; exige JWT e verifica se ele pertence ao usuário autenticado.
 
-O gateway aplica um limite de 60 chamadas por minuto por IP, mantido em memória no processo. Os serviços internos não publicam portas próprias no host; o gateway é a entrada da aplicação.
+O gateway aplica um limite de 60 chamadas por minuto por IP no login e no envio de jobs, mantido em memória no processo. Os serviços internos não publicam portas próprias no host; o gateway é a entrada da aplicação e, no host, só escuta em `127.0.0.1:8000`.
 
 ## Resiliência e observabilidade
 
@@ -109,9 +109,9 @@ Nesta configuração não há armazenamento persistente nem painel para consulta
 
 **Finalidade:** autenticar o usuário, controlar a frequência de chamadas, processar a solicitação e recuperar contexto para a resposta. Se `OPENAI_API_KEY` for configurada, o texto e o contexto necessário podem ser enviados ao provedor indicado em `OPENAI_BASE_URL`.
 
-**Retenção:** o JWT expira após 60 minutos por padrão; os dados do rate limit ficam em memória por janela de 60 segundos. Jobs e documentos permanecem nos volumes do Redis e do Qdrant até serem removidos. Não há expiração automática configurada. `docker compose down -v` remove os volumes locais. Antes de usar dados reais, o grupo precisa definir um prazo de retenção e um procedimento de exclusão.
+**Retenção:** o JWT expira após 60 minutos por padrão; os dados do rate limit ficam em memória por janela de 60 segundos. Jobs e resultados expiram no Redis após 24 horas (`JOB_TTL_SECONDS`). Documentos permanecem no volume do Qdrant até serem removidos. `docker compose down -v` remove os volumes locais. Antes de usar dados reais, o grupo precisa definir um procedimento de exclusão dos documentos.
 
-O segredo JWT e a senha ficam no `.env`, que não deve ser versionado. A autenticação por senha única de demonstração não é adequada para usuários reais. Não use dados pessoais ou sensíveis na demonstração. Em uma publicação, o acesso deve ser feito por HTTPS; a política e a região de processamento do provedor de IA também devem ser verificadas antes de enviar dados.
+O segredo JWT e a senha ficam no `.env`, que não deve ser versionado. A autenticação por senha única de demonstração não é adequada para usuários reais. Os logs de acesso do uvicorn estão desligados, e o collector remove IP e user agent dos spans antes de exibi-los. Não use dados pessoais ou sensíveis na demonstração. Em uma publicação, o acesso deve ser feito por HTTPS; a política e a região de processamento do provedor de IA também devem ser verificadas antes de enviar dados.
 
 ## Publicação com HTTPS
 
@@ -121,7 +121,7 @@ O perfil `public` inicia o Caddy, que pode solicitar e renovar um certificado TL
 docker compose --profile public up --build -d
 ```
 
-O guia está em [`docs/GUIA.md`](docs/GUIA.md). **Ainda não há publicação nem URL pública validada.** Depois do deploy, teste o endpoint de saúde e o fluxo de jobs pela URL HTTPS e registre o endereço real nesta seção. No perfil público, também é necessário impedir o acesso externo direto à porta 8000 do gateway, para que o tráfego não contorne o Caddy.
+O guia está em [`docs/GUIA.md`](docs/GUIA.md). **Ainda não há publicação nem URL pública validada.** Depois do deploy, teste o endpoint de saúde e o fluxo de jobs pela URL HTTPS e registre o endereço real nesta seção. A porta 8000 do gateway só é publicada em `127.0.0.1`; o acesso externo passa pelo Caddy.
 
 **URL pública:** pendente de publicação e teste.
 
@@ -143,6 +143,8 @@ pytest -q
 python -m compileall -q services tests
 ```
 
+Com a stack no ar, `bash scripts/smoke-test.sh` testa o fluxo completo (login, envio do job, worker, inferência e resultado) e confere se o mesmo trace passa pelo gateway e pelo worker. O GitHub Actions executa esse teste a cada push.
+
 Os testes automatizados não substituem a validação integrada com Docker. Antes da entrega, falta:
 
 - [ ] Executar `docker compose up --build -d` em um host com Docker Compose v2 e confirmar que todos os serviços iniciam.
@@ -150,8 +152,8 @@ Os testes automatizados não substituem a validação integrada com Docker. Ante
 - [ ] Verificar a propagação de um trace do gateway pela fila até o worker e os serviços chamados.
 - [ ] Testar o timeout, as retentativas e o circuit breaker diante de falhas controladas.
 - [ ] Publicar a aplicação em um plano gratuito compatível, testar o acesso por HTTPS e registrar a URL pública real.
-- [ ] No ambiente publicado, bloquear o acesso externo direto à porta 8000 e confirmar que a entrada ocorre pelo Caddy/HTTPS.
-- [ ] Definir o prazo de retenção e o procedimento de exclusão de jobs e documentos antes de usar dados reais.
+- [ ] No ambiente publicado, confirmar que a porta 8000 não responde de fora e que a entrada ocorre pelo Caddy/HTTPS.
+- [ ] Definir o procedimento de exclusão dos documentos antes de usar dados reais.
 
 O grupo também deve considerar a possibilidade de perda de um job após uma falha abrupta do worker. A implementação atual não usa confirmação e recuperação de mensagens com Redis Streams; essa limitação precisa ser testada e descrita, ou corrigida.
 

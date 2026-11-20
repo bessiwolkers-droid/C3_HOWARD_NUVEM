@@ -7,13 +7,13 @@ services:
       JWT_TTL_MINUTES: ${JWT_TTL_MINUTES:-60}
       DEMO_USERNAME: ${DEMO_USERNAME:-aluno}
       DEMO_PASSWORD: ${DEMO_PASSWORD:?Defina DEMO_PASSWORD em .env}
+      JOB_TTL_SECONDS: ${JOB_TTL_SECONDS:-86400}
       REDIS_URL: redis://redis:6379/0
       INFERENCE_URL: http://inference:8001
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     depends_on:
       redis: {condition: service_healthy}
-      inference: {condition: service_started}
       otel-collector: {condition: service_started}
     restart: unless-stopped
   inference:
