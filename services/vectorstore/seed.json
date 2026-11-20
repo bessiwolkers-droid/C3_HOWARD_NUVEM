@@ -1,0 +1,10 @@
+[
+  {"id": "cap-01", "text": "O teorema CAP diz que, durante uma partição de rede, um sistema distribuído precisa escolher entre consistência e disponibilidade."},
+  {"id": "fila-01", "text": "Uma fila de mensagens desacopla quem envia de quem processa: o gateway responde na hora e o worker consome os jobs no seu próprio ritmo."},
+  {"id": "retry-01", "text": "Retentativa com espera progressiva repete uma chamada que falhou, aumentando o intervalo a cada tentativa para não sobrecarregar o serviço."},
+  {"id": "breaker-01", "text": "O circuit breaker para de chamar um serviço depois de várias falhas seguidas e só volta a tentar após um tempo de espera."},
+  {"id": "timeout-01", "text": "Um tempo-limite evita que uma chamada fique presa esperando um serviço lento ou indisponível."},
+  {"id": "trace-01", "text": "O rastreamento distribuído liga as etapas de uma mesma requisição em vários serviços por meio de um identificador de trace."},
+  {"id": "jwt-01", "text": "O JWT é um token assinado que o cliente envia em cada requisição para provar que está autenticado."},
+  {"id": "ratelimit-01", "text": "O rate limit restringe quantas requisições um cliente pode fazer por minuto, protegendo o sistema contra abuso."}
+]

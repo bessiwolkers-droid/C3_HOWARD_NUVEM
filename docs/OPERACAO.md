@@ -1,5 +1,7 @@
 # Operação e desenvolvimento
 
+Ao criar a coleção, o vectorstore carrega os textos de `services/vectorstore/seed.json`, para que a demonstração tenha contexto em um clone limpo.
+
 Inserção de documento de teste no Qdrant (a API vectorstore não é publicada para fora por padrão):
 
 ```bash

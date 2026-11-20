@@ -1,4 +1,5 @@
-import os, hashlib, re, uuid
+import os, hashlib, json, re, uuid
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient, models
@@ -17,8 +18,16 @@ def embed(text):
   n=int(hashlib.sha256(word.encode()).hexdigest()[:8],16)%DIM; v[n]+=1.0
  norm=sum(x*x for x in v)**0.5
  return [x/norm for x in v] if norm else v
+def upsert(external_id,text):
+ point_id=str(uuid.uuid5(uuid.NAMESPACE_URL,external_id))
+ client.upsert(collection_name=COLLECTION,points=[models.PointStruct(id=point_id,vector=embed(text),payload={'text':text,'external_id':external_id})],wait=True)
 def ensure():
- if not client.collection_exists(COLLECTION): client.create_collection(COLLECTION,vectors_config=models.VectorParams(size=DIM,distance=models.Distance.COSINE))
+ if client.collection_exists(COLLECTION): return
+ client.create_collection(COLLECTION,vectors_config=models.VectorParams(size=DIM,distance=models.Distance.COSINE))
+ # Base inicial para a demonstracao funcionar em um clone limpo
+ seed=Path(__file__).with_name('seed.json')
+ if seed.is_file():
+  for doc in json.loads(seed.read_text(encoding='utf-8')): upsert(doc['id'],doc['text'])
 @app.get('/saude')
 def health():
  try: ensure(); return {'status':'ok','collection':COLLECTION}
@@ -26,8 +35,7 @@ def health():
 @app.post('/documents')
 def put(d:Document):
  ensure(); external_id=d.id or hashlib.sha256(d.text.encode()).hexdigest()[:32]
- point_id=str(uuid.uuid5(uuid.NAMESPACE_URL,external_id))
- client.upsert(collection_name=COLLECTION,points=[models.PointStruct(id=point_id,vector=embed(d.text),payload={'text':d.text,'external_id':external_id})],wait=True)
+ upsert(external_id,d.text)
  return {'id':external_id,'status':'stored'}
 @app.post('/search')
 def search(q:Search):

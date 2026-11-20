@@ -1,5 +1,6 @@
 from pathlib import Path
 import ast
+import re
 ROOT=Path(__file__).resolve().parents[1]
 def test_each_application_service_has_dockerfile_and_requirements():
  for name in ('gateway','inference','worker','vectorstore'):
@@ -12,7 +13,8 @@ def test_gateway_auth_and_routes_present():
   assert item in s
 def test_worker_retry_and_backoff_present():
  s=(ROOT/'services/worker/worker.py').read_text()
- assert 'MAX_RETRIES' in s and 'asyncio.sleep(min(2**attempt,8))' in s and 'class Breaker' in s
+ assert 'MAX_RETRIES' in s and 'class Breaker' in s
+ assert re.search(r'asyncio\.sleep\(\s*min\(\s*2\s*\*\*\s*attempt\s*,\s*8\s*\)\s*\)',s)
 def test_compose_includes_required_components_and_unique_builds():
  s=(ROOT/'docker-compose.yml').read_text()
  for item in ('gateway:','inference:','worker:','vectorstore:','redis:','qdrant:','otel-collector:','build: ./services/'):
