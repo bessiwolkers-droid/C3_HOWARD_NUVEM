@@ -1,4 +1,4 @@
-import os, time, uuid, asyncio
+import os, time, uuid, asyncio, json, hmac
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
@@ -17,7 +17,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
 
-SECRET=os.environ['JWT_SECRET']; TTL=int(os.getenv('JWT_TTL_MINUTES','60')); R=redis.from_url(os.getenv('REDIS_URL','redis://redis:6379/0'),decode_responses=True); URL=os.getenv('INFERENCE_URL','http://inference:8001')
+SECRET=os.environ['JWT_SECRET']; TTL=int(os.getenv('JWT_TTL_MINUTES','60')); R=redis.from_url(os.getenv('REDIS_URL','redis://redis:6379/0'),decode_responses=True); URL=os.getenv('INFERENCE_URL','http://inference:8001'); JOB_TTL=int(os.getenv('JOB_TTL_SECONDS','86400'))
 provider=TracerProvider(resource=Resource.create({'service.name':'gateway'})); provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT','http://otel-collector:4317'),insecure=True))); trace.set_tracer_provider(provider); tracer=trace.get_tracer('c3.gateway')
 HTTPXClientInstrumentor().instrument(); RedisInstrumentor().instrument(); security=HTTPBearer(auto_error=False); hits=defaultdict(deque); rate_lock=asyncio.Lock()
 @asynccontextmanager
@@ -39,11 +39,15 @@ async def limit(request:Request, user:str):
   while q and q[0] < now-60: q.popleft()
   if len(q)>=60: raise HTTPException(429,'Rate limit: 60 requests/minute')
   q.append(now)
+  for k in [k for k,v in hits.items() if v and v[-1] < now-60]: del hits[k]
 @app.get('/saude')
 async def health(): return {'status':'ok','service':'gateway'}
 @app.post('/auth/login')
-async def login(payload:Login):
- if payload.username!=os.getenv('DEMO_USERNAME','aluno') or payload.password!=os.getenv('DEMO_PASSWORD'): raise HTTPException(401,'Credenciais invalidas')
+async def login(payload:Login, request:Request):
+ await limit(request, payload.username)
+ user_ok=hmac.compare_digest(payload.username.encode(),os.getenv('DEMO_USERNAME','aluno').encode())
+ pass_ok=hmac.compare_digest(payload.password.encode(),os.environ['DEMO_PASSWORD'].encode())
+ if not (user_ok and pass_ok): raise HTTPException(401,'Credenciais invalidas')
  now=datetime.now(timezone.utc); token=jwt.encode({'sub':payload.username,'iat':now,'exp':now+timedelta(minutes=TTL)},SECRET,algorithm='HS256')
  return {'access_token':token,'token_type':'bearer','expires_in':TTL*60}
 
@@ -80,7 +84,9 @@ async def submit(
             }
         )
 
-        await R.lpush('jobs', __import__('json').dumps(msg))
+        await R.expire(f'job:{job_id}', JOB_TTL)
+
+        await R.lpush('jobs', json.dumps(msg))
 
     return {
         'job_id': job_id,
@@ -92,5 +98,5 @@ async def submit(
 async def get_job(job_id:str,user:str=Depends(auth)):
  data=await R.hgetall(f'job:{job_id}')
  if not data or data.get('owner')!=user: raise HTTPException(404,'Job not found')
- if data.get('result'): data['result']=__import__('json').loads(data['result'])
+ if data.get('result'): data['result']=json.loads(data['result'])
  return {'job_id':job_id,**data}
